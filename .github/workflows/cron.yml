@@ -5,14 +5,29 @@ on:
   schedule:
     # Runs every 5 minutes
     - cron: '*/5 * * * *'
-  workflow_dispatch: # Allows manual triggering from the Actions tab
+    # Runs every 2 minutes
+    - cron: '*/2 * * * *'
+  workflow_dispatch:
 
 jobs:
   trigger-schedule-bots:
+    # Only run this job on the 5-minute schedule
+    if: github.event.schedule == '*/5 * * * *'
     runs-on: ubuntu-latest
     steps:
       - name: Call schedule-bots endpoint
         run: |
           curl --request GET \
           --url '${{ secrets.DEPLOYMENT_URL }}/api/schedule-bots' \
+          --header 'Authorization: Bearer ${{ secrets.CRON_SECRET }}'
+
+  trigger-poll-transcripts:
+    # Only run this job on the 2-minute schedule
+    if: github.event.schedule == '*/2 * * * *'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call poll-transcripts endpoint
+        run: |
+          curl --request GET \
+          --url '${{ secrets.DEPLOYMENT_URL }}/api/poll-transcripts' \
           --header 'Authorization: Bearer ${{ secrets.CRON_SECRET }}'
