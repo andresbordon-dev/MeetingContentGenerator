@@ -1,9 +1,11 @@
 // src/app/meetings/[id]/meeting-detail-client.tsx
 'use client';
+import { useState } from 'react';
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Copy } from "lucide-react";
+import { postToLinkedIn } from '@/app/actions';
+import { Copy, Send } from "lucide-react";
 import { toast } from "sonner";
 
 // Define types based on our database schema
@@ -33,12 +35,34 @@ const formatPlatformName = (type: string) => {
 }
 
 export function MeetingDetailClient({ meeting, emailContent, socialPosts }: MeetingDetailClientProps) {
-    
+    const [isPosting, setIsPosting] = useState(false);
+
     const handleCopy = (text: string, type: string) => {
-    if (!text) return;
-    navigator.clipboard.writeText(text);
-    toast.success(`${type} copied to clipboard!`);
-  };
+        if (!text) return;
+        navigator.clipboard.writeText(text);
+        toast.success(`${type} copied to clipboard!`);
+    };
+
+    const handlePost = async (content: string | null, platform: string) => {
+        if (!content) return;
+
+        setIsPosting(true);
+        const toastId = toast.loading(`Posting to ${platform}...`);
+
+        let result;
+        if (platform === 'LinkedIn') {
+            result = await postToLinkedIn(content);
+        } else {
+            result = { error: 'This platform is not supported for posting yet.' };
+        }
+
+        if (result.success) {
+            toast.success(`Successfully posted to ${platform}!`, { id: toastId });
+        } else {
+            toast.error(`Failed to post: ${result.error}`, { id: toastId });
+        }
+        setIsPosting(false);
+    };
 
     return (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -48,7 +72,7 @@ export function MeetingDetailClient({ meeting, emailContent, socialPosts }: Meet
                         <TabsTrigger value="social">Social Media Posts</TabsTrigger>
                         <TabsTrigger value="email">Follow-up Email</TabsTrigger>
                     </TabsList>
-                    
+
                     <TabsContent value="social">
                         <Tabs defaultValue={socialPosts[0]?.type || 'none'}>
                             <TabsList>
@@ -61,9 +85,9 @@ export function MeetingDetailClient({ meeting, emailContent, socialPosts }: Meet
                             {socialPosts.map(post => (
                                 <TabsContent key={post.id} value={post.type} className="mt-4">
                                     <div className="prose bg-muted rounded-md p-4 relative">
-                                        <Button 
-                                            variant="ghost" 
-                                            size="icon" 
+                                        <Button
+                                            variant="ghost"
+                                            size="icon"
                                             className="absolute top-2 right-2 h-7 w-7"
                                             onClick={() => handleCopy(post.content || '', formatPlatformName(post.type))}
                                         >
@@ -72,8 +96,14 @@ export function MeetingDetailClient({ meeting, emailContent, socialPosts }: Meet
                                         <pre className="bg-transparent p-0 whitespace-pre-wrap font-sans text-sm">{post.content}</pre>
                                     </div>
                                     <div className="mt-4 flex justify-end">
-                                        {/* POST BUTTON GOES HERE - Placeholder for now */}
-                                        <Button disabled>Post to {formatPlatformName(post.type)}</Button>
+                                        <div className="mt-4 flex justify-end">
+                                            <Button
+                                                onClick={() => handlePost(post.content, formatPlatformName(post.type))}
+                                                disabled={isPosting || formatPlatformName(post.type) !== 'LinkedIn'}
+                                            >
+                                                {isPosting ? 'Posting...' : <><Send className="h-4 w-4 mr-2" /> Post to {formatPlatformName(post.type)}</>}
+                                            </Button>
+                                        </div>
                                     </div>
                                 </TabsContent>
                             ))}
@@ -81,10 +111,10 @@ export function MeetingDetailClient({ meeting, emailContent, socialPosts }: Meet
                     </TabsContent>
 
                     <TabsContent value="email">
-                         <div className="prose bg-muted rounded-md p-4 relative">
-                            <Button 
-                                variant="ghost" 
-                                size="icon" 
+                        <div className="prose bg-muted rounded-md p-4 relative">
+                            <Button
+                                variant="ghost"
+                                size="icon"
                                 className="absolute top-2 right-2 h-7 w-7"
                                 onClick={() => handleCopy(emailContent, 'Email content')}
                             >
@@ -103,10 +133,10 @@ export function MeetingDetailClient({ meeting, emailContent, socialPosts }: Meet
                     </SheetTrigger>
                     <SheetContent className="w-full sm:max-w-2xl overflow-y-auto">
                         <SheetHeader>
-                        <SheetTitle>Meeting Transcript</SheetTitle>
-                        <SheetDescription>
-                            Full transcript of the meeting provided by Recall.ai.
-                        </SheetDescription>
+                            <SheetTitle>Meeting Transcript</SheetTitle>
+                            <SheetDescription>
+                                Full transcript of the meeting provided by Recall.ai.
+                            </SheetDescription>
                         </SheetHeader>
                         <div className="mt-4 prose prose-sm max-w-none">
                             <p>{meeting.transcript || "Transcript not available."}</p>

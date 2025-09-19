@@ -128,3 +128,57 @@ export async function toggleMeetingTranscription(event: CalendarEvent, isEnabled
     // Revalidate the dashboard path to show changes
     revalidatePath('/dashboard');
 }
+
+export async function postToLinkedIn(content: string) {
+    const supabase = await createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+
+    if (!user) {
+        return { error: 'User not authenticated.' };
+    }
+
+    const { data: account, error: accountError } = await supabase
+        .from('connected_accounts')
+        .select('access_token, provider_user_id')
+        .eq('user_id', user.id)
+        .eq('provider', 'linkedin')
+        .single();
+
+    if (accountError || !account) {
+        return { error: 'LinkedIn account not connected.' };
+    }
+
+    try {
+        const postResponse = await fetch('https://api.linkedin.com/v2/ugcPosts', {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${account.access_token}`,
+                'Content-Type': 'application/json',
+                'X-Restli-Protocol-Version': '2.0.0'
+            },
+            body: JSON.stringify({
+                author: `urn:li:person:${account.provider_user_id}`,
+                lifecycleState: 'PUBLISHED',
+                specificContent: {
+                    'com.linkedin.ugc.ShareContent': {
+                        shareCommentary: { text: content },
+                        shareMediaCategory: 'NONE'
+                    }
+                },
+                visibility: { 'com.linkedin.ugc.MemberNetworkVisibility': 'CONNECTIONS' }
+            })
+        });
+
+        if (!postResponse.ok) {
+            const errorData = await postResponse.json();
+            console.error("LinkedIn API Error:", errorData);
+            throw new Error(errorData.message || 'Failed to post to LinkedIn.');
+        }
+        
+        return { success: true };
+
+    } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        return { error: message };
+    }
+}

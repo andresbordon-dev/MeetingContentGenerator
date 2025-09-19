@@ -1,6 +1,6 @@
 // src/app/meetings/page.tsx
 import { createClient } from "@/lib/supabase/server";
-import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
+import { Card, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import Link from "next/link";
 import { format } from 'date-fns';
 import { CheckCircle, Clock, AlertTriangle } from 'lucide-react';

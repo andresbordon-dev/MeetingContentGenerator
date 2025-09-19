@@ -25,9 +25,10 @@ export default function RootLayout({
 }: {
   children: React.ReactNode;
 }) {
+  const bodyClass = `${inter.className} ${geistSans.variable} ${geistMono.variable}`;
   return (
     <html lang="en">
-      <body className={inter.className}>
+      <body className={bodyClass}>
         {children}
         <Toaster position="top-right" richColors />
       </body>

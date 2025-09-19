@@ -1,7 +1,7 @@
 // src/app/dashboard/page.tsx
 import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
-import { getCalendarEvents, CalendarEvent } from "../actions";
+import { getCalendarEvents } from "../actions";
 import { EventList } from "./event-list";
 
 export default async function DashboardPage() {

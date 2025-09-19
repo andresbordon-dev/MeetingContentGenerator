@@ -57,10 +57,20 @@ async function generateSocialMediaPost(transcript: string): Promise<string> {
   }
 }
 
+// Define interface for Recall.ai bot response
+interface RecallBotResponse {
+  state: string;
+  transcript_url?: string;
+}
+
+// Define interface for transcript item
+interface TranscriptItem {
+  text?: string;
+  [key: string]: unknown; // Allow for other properties we might not care about
+}
 
 // --- MAIN API ROUTE ---
-
-export async function GET(request: Request) {
+export async function GET(_request: Request) {
   // 1. Secure the endpoint
   const headersList = await headers();
   const authHeader = headersList.get('authorization');
@@ -107,15 +117,18 @@ export async function GET(request: Request) {
         throw new Error(`Recall API responded with status ${response.status}`);
       }
 
-      const botData = await response.json();
+      const botData: RecallBotResponse = await response.json();
 
       // 4. If transcript is ready, process it
       if (botData.state === 'media_ready' && botData.transcript_url) {
         console.log(`Transcript ready for meeting ${meeting.id}. Processing...`);
 
         const transcriptResponse = await fetch(botData.transcript_url);
-        const transcriptData = await transcriptResponse.json();
-        const transcriptText = transcriptData.map((t: any) => t.text).join(' ');
+        const transcriptData: TranscriptItem[] | unknown = await transcriptResponse.json();
+        
+        const transcriptText = Array.isArray(transcriptData)
+          ? transcriptData.map(t => t?.text || '').join(' ')
+          : '';
 
         if (!transcriptText) {
             throw new Error("Transcript text is empty.");

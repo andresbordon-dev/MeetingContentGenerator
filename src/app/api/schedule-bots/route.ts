@@ -3,7 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { NextResponse } from "next/server";
 import { headers } from "next/headers"; // Make sure this is imported
 
-export async function GET(request: Request) {
+export async function GET(_request: Request) {
   // SECURE THE ENDPOINT
   const headersList = await headers();
   const authHeader = headersList.get('authorization');
@@ -12,6 +12,6 @@ export async function GET(request: Request) {
   }
 
   // ... rest of the function remains the same
-  const supabase = createClient();
+  const _supabase = createClient();
   // ...
 }
