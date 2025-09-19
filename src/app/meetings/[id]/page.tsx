@@ -5,12 +5,12 @@ import { format } from "date-fns";
 import { MeetingDetailClient } from "./meeting-detail-client";
 
 type MeetingDetailPageProps = {
-  params: { id: string };
+  params: Promise<{ id: string }>;
 };
 
 export default async function MeetingDetailPage({ params }: MeetingDetailPageProps) {
   const supabase = await createClient();
-  const { id } = params;
+  const { id } = await params;
 
   const { data: meeting } = await supabase
     .from('meetings')
