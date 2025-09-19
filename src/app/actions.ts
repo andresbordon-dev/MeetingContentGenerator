@@ -17,69 +17,76 @@ export type CalendarEvent = {
 };
 
 export async function getCalendarEvents(): Promise<CalendarEvent[]> {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+    const supabase = await createClient();
+    const { data: { user } } = await supabase.auth.getUser();
 
-  if (!user) {
-    throw new Error("User not authenticated");
-  }
-
-  const { data: accounts, error } = await supabase
-    .from('connected_accounts')
-    .select('access_token, refresh_token')
-    .eq('user_id', user.id)
-    .eq('provider', 'google');
-    
-  if (error || !accounts) {
-    console.error("Error fetching connected accounts:", error);
-    return [];
-  }
-
-  const allEvents: CalendarEvent[] = [];
-
-  for (const account of accounts) {
-    const oauth2Client = new google.auth.OAuth2();
-    oauth2Client.setCredentials({
-      access_token: account.access_token,
-      refresh_token: account.refresh_token,
-    });
-
-    // Simple token refresh logic (a more robust solution would handle errors and update the DB)
-    // For this challenge, we assume the token is valid or refreshable.
-    
-    const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
-    try {
-      const response = await calendar.events.list({
-        calendarId: 'primary',
-        timeMin: (new Date()).toISOString(),
-        maxResults: 15,
-        singleEvents: true,
-        orderBy: 'startTime',
-      });
-      
-      const events = response.data.items;
-      if (events && events.length) {
-        const formattedEvents = events.map((event) => ({
-          id: event.id!,
-          title: event.summary || 'No Title',
-          startTime: event.start?.dateTime || event.start?.date || undefined,
-          endTime: event.end?.dateTime || event.end?.date || undefined,
-          attendees: event.attendees?.map(a => ({ email: a.email!, responseStatus: a.responseStatus! })) || [],
-          description: event.description || '',
-          location: event.location || '',
-        }));
-        allEvents.push(...formattedEvents);
-      }
-    } catch (err) {
-        console.error('The API returned an error for an account: ' + err);
-        // In a real app, you would handle token refresh errors here
+    if (!user) {
+        console.log("getCalendarEvents: User not authenticated");
+        return [];
     }
-  }
 
-  // Sort all events from all calendars by start time
-  allEvents.sort((a, b) => new Date(a.startTime!).getTime() - new Date(b.startTime!).getTime());
+    const { data: accounts, error } = await supabase
+        .from('connected_accounts')
+        .select('access_token, refresh_token')
+        .eq('user_id', user.id)
+        .eq('provider', 'google');
+        
+    if (error) {
+        console.error("Error fetching connected accounts:", error);
+        return [];
+    }
 
-  return allEvents;
+    if (!accounts || accounts.length === 0) {
+        console.log("No connected Google accounts found for this user.");
+        return [];
+    }
+
+    const allEvents: CalendarEvent[] = [];
+    const oauth2Client = new google.auth.OAuth2();
+
+    for (const account of accounts) {
+        if (!account.access_token) continue;
+
+        oauth2Client.setCredentials({
+            access_token: account.access_token,
+            refresh_token: account.refresh_token,
+        });
+        
+        const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+        try {
+            const timeMin = new Date().toISOString();
+            const timeMax = new Date();
+            timeMax.setDate(timeMax.getDate() + 30); // Fetch events for the next 30 days
+
+            const response = await calendar.events.list({
+                calendarId: 'primary',
+                timeMin: timeMin,
+                timeMax: timeMax.toISOString(),
+                maxResults: 15,
+                singleEvents: true,
+                orderBy: 'startTime',
+            });
+            
+            const events = response.data.items;
+            if (events && events.length) {
+                const formattedEvents = events.map((event) => ({
+                    id: event.id!,
+                    title: event.summary || 'No Title',
+                    startTime: event.start?.dateTime || event.start?.date || undefined,
+                    endTime: event.end?.dateTime || event.end?.date || undefined,
+                    attendees: event.attendees?.filter(a => a.email).map(a => ({ email: a.email!, responseStatus: a.responseStatus! })) || [],
+                    description: event.description || '',
+                    location: event.location || '',
+                }));
+                allEvents.push(...formattedEvents);
+            }
+        } catch (err) {
+            console.error('The API returned an error for an account: ' + err);
+        }
+    }
+
+    allEvents.sort((a, b) => new Date(a.startTime!).getTime() - new Date(b.startTime!).getTime());
+    return allEvents;
 }
 
 // This action will be called when a user toggles the switch

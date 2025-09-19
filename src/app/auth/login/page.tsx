@@ -22,6 +22,10 @@ export default function LoginPage() {
         // We add this scope again to ensure we can get a refresh token
         // for offline access to the calendar later.
         scopes: 'https://www.googleapis.com/auth/calendar.readonly',
+        queryParams: {
+          access_type: 'offline', // This is crucial to get a refresh token
+          prompt: 'consent', // This forces the consent screen to appear every time, useful for testing and ensuring token refresh
+        },
       },
     })
   }
