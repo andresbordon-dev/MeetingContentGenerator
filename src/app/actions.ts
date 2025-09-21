@@ -2,6 +2,7 @@
 'use server'
 
 import { createClient } from "@/lib/supabase/server";
+import { redirect } from "next/navigation";
 import { google } from "googleapis";
 import { revalidatePath } from "next/cache";
 
@@ -242,4 +243,10 @@ export async function postToLinkedIn(content: string) {
         const message = err instanceof Error ? err.message : String(err);
         return { error: message };
     }
+}
+
+export async function signOut() {
+  const supabase = await createClient();
+  await supabase.auth.signOut();
+  return redirect('/auth/login');
 }
