@@ -2,6 +2,7 @@
 'use client';
 
 import { Button } from "@/components/ui/button";
+import { Icons } from "@/components/icons";
 
 // This component will be more dynamic later, but for now it's simple.
 const LinkedInIcon = () => (
@@ -22,8 +23,38 @@ export function SocialConnections({ serverConnectedProviders }: { serverConnecte
     window.location.href = oauthUrl;
   };
 
+  const handleConnectGoogle = () => {
+    const clientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
+    // This is our new, dedicated callback route
+    const redirectUri = `${window.location.origin}/api/auth/callback/google-additional`;
+    const scope = 'https://www.googleapis.com/auth/calendar.readonly';
+    
+    // The 'prompt' parameter is crucial. 'select_account' forces the user to
+    // choose which Google account to connect, even if they are already logged in to one.
+    const oauthUrl = `https://accounts.google.com/o/oauth2/v2/auth?` +
+      `client_id=${clientId}` +
+      `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+      `&response_type=code` +
+      `&scope=${encodeURIComponent(scope)}` +
+      `&access_type=offline` + // Ensures we get a refresh token
+      `&prompt=consent select_account`;
+
+    window.location.href = oauthUrl;
+  };
+
   return (
     <div className="space-y-4">
+      <div className="flex items-center justify-between p-4 border rounded-md">
+        <div className="flex items-center">
+          <Icons.google className="mr-2 h-4 w-4" />
+          <span className="font-medium">Google Calendar</span>
+        </div>
+        {/* The primary account is connected via login, so this adds more */}
+        <Button onClick={handleConnectGoogle} variant="outline">
+          Connect another account
+        </Button>
+      </div>
+
       <div className="flex items-center justify-between p-4 border rounded-md">
         <div className="flex items-center">
           <LinkedInIcon />
