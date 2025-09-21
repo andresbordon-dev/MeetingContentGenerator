@@ -125,34 +125,76 @@ export async function GET(_request: Request) {
 
         const transcriptResponse = await fetch(botData.transcript_url);
         const transcriptData: TranscriptItem[] | unknown = await transcriptResponse.json();
-        
+
         const transcriptText = Array.isArray(transcriptData)
           ? transcriptData.map(t => t?.text || '').join(' ')
           : '';
 
         if (!transcriptText) {
-            throw new Error("Transcript text is empty.");
+          throw new Error("Transcript text is empty.");
         }
 
-        // --- Trigger AI Content Generation ---
-        const [emailContent, socialPostContent] = await Promise.all([
-            generateFollowUpEmail(transcriptText),
-            generateSocialMediaPost(transcriptText)
-        ]);
+        const { data: automations, error: autoError } = await supabase
+          .from('automations')
+          .select('*')
+          .eq('user_id', meeting.user_id);
+
+        if (autoError) throw new Error(`Could not fetch automations: ${autoError.message}`);
+
+        // 2. Generate content for each automation
+        if (automations && automations.length > 0) {
+          await Promise.all(automations.map(async (automation) => {
+            const completion = await openai.chat.completions.create({
+              model: "gpt-3.5-turbo",
+              messages: [
+                { role: "system", content: automation.prompt },
+                { role: "user", content: `Here is the meeting transcript:\n\n${transcriptText}` }
+              ]
+            });
+            const content = completion.choices[0].message.content;
+
+            // Save this specific piece of content, linked to its automation
+            await supabase.from('generated_content').upsert({
+              meeting_id: meeting.id,
+              automation_id: automation.id,
+              type: `social_post_${automation.platform}`, // Keep type for simple filtering
+              content: content
+            }, { onConflict: 'meeting_id, automation_id' });
+          }));
+        }
+
+        // Generate the standard follow-up email (this is separate from automations)
+        const emailContent = await generateFollowUpEmail(transcriptText);
+        await supabase.from('generated_content').upsert({
+          meeting_id: meeting.id,
+          type: 'email',
+          content: emailContent
+        }, { onConflict: 'meeting_id, type' }); // This might need a different onConflict strategy, but is okay for now
+
+        // 3. Update the meeting status to completed
+        await supabase.from('meetings').update({
+          status: 'completed',
+          transcript: transcriptText,
+        }).eq('id', meeting.id);
+
+        console.log(`Successfully processed and generated content for meeting ${meeting.id}`);
+        processedCount++;
+
+        const socialPostContent = await generateSocialMediaPost(transcriptText);
 
         // --- Save everything to the database ---
         const { error: updateError } = await supabase.from('meetings').update({
-            status: 'completed',
-            transcript: transcriptText,
+          status: 'completed',
+          transcript: transcriptText,
         }).eq('id', meeting.id);
 
         if (updateError) throw updateError;
-        
+
         // For now, we save these with a fixed type. Later, this would link to the user's specific automations.
         // Using `upsert` is a good practice here in case the job runs twice.
         const { error: contentError } = await supabase.from('generated_content').upsert([
-            { meeting_id: meeting.id, type: 'email', content: emailContent },
-            { meeting_id: meeting.id, type: 'social_post_linkedin', content: socialPostContent }
+          { meeting_id: meeting.id, type: 'email', content: emailContent },
+          { meeting_id: meeting.id, type: 'social_post_linkedin', content: socialPostContent }
         ], { onConflict: 'meeting_id, type' });
 
         if (contentError) throw contentError;

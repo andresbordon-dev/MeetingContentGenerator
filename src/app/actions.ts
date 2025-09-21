@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import { google } from "googleapis";
 import { revalidatePath } from "next/cache";
+import { z } from "zod";
 
 // Define a type for our calendar events for type safety
 export type CalendarEvent = {
@@ -249,4 +250,94 @@ export async function signOut() {
   const supabase = await createClient();
   await supabase.auth.signOut();
   return redirect('/auth/login');
+}
+
+const AutomationSchema = z.object({
+  id: z.string().uuid().optional().nullable(),
+  name: z.string().min(3, "Name must be at least 3 characters"),
+  platform: z.string().min(1, "Platform is required"),
+  prompt: z.string().min(10, "Description must be at least 10 characters"),
+});
+
+type FormState = {
+  success?: boolean;
+  error?: string;
+  issues?: Record<string, string[] | undefined>;
+} | null;
+
+export async function saveAutomation(prevState: FormState, formData: FormData): Promise<FormState> {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { error: "Not authenticated" };
+
+  const validatedFields = AutomationSchema.safeParse({
+    id: formData.get('id'),
+    name: formData.get('name'),
+    platform: formData.get('platform'),
+    prompt: formData.get('prompt'),
+  });
+  
+  if (!validatedFields.success) {
+    return { error: "Invalid data", issues: validatedFields.error.flatten().fieldErrors };
+  }
+
+  const { id, ...dataToSave } = validatedFields.data;
+
+  const { error } = await supabase
+    .from('automations')
+    .upsert({
+      id: id || undefined,
+      user_id: user.id,
+      ...dataToSave
+    });
+  
+  if (error) {
+    return { error: `Database error: ${error.message}` };
+  }
+
+  revalidatePath('/settings');
+  return { success: true };
+}
+
+export async function deleteAutomation(automationId: string) {
+    const supabase = await createClient();
+    const { error } = await supabase.from('automations').delete().eq('id', automationId);
+    if (error) return { error: `Database error: ${error.message}` };
+
+    revalidatePath('/settings');
+    return { success: true };
+}
+
+export async function getMeetingDetails(meetingId: string) {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error("Not authenticated");
+
+  // Fetch the meeting itself, including the transcript
+  const { data: meeting, error: meetingError } = await supabase
+    .from('meetings')
+    .select('*')
+    .eq('id', meetingId)
+    .eq('user_id', user.id) // Security check
+    .single();
+  
+  if (meetingError) throw new Error(`Meeting not found: ${meetingError.message}`);
+
+  // Fetch all generated content for this meeting, joining with the automation that created it
+  const { data: generatedContent, error: contentError } = await supabase
+    .from('generated_content')
+    .select('*, automations(name, platform)')
+    .eq('meeting_id', meetingId);
+
+  if (contentError) throw new Error(`Could not fetch content: ${contentError.message}`);
+
+  // Organize the data for the client
+  const emailContent = generatedContent?.find(c => c.type === 'email');
+  const socialPosts = generatedContent?.filter(c => c.type.startsWith('social_post'));
+
+  return {
+    meeting,
+    emailContent,
+    socialPosts
+  };
 }

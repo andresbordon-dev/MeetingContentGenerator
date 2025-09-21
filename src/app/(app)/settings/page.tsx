@@ -2,6 +2,7 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { SocialConnections } from "./social-connections";
 import { createClient } from "@/lib/supabase/server";
+import { AutomationList } from "./AutomationList";
 
 export default async function SettingsPage() {
   const supabase = await createClient();
@@ -13,6 +14,8 @@ export default async function SettingsPage() {
     .from('connected_accounts')
     .select('provider')
     .eq('user_id', user!.id);
+
+    const { data: automations } = await supabase.from('automations').select('*').eq('user_id', user!.id);
     
   const connectedProviders = connections?.map(c => c.provider) || [];
 
@@ -36,8 +39,7 @@ export default async function SettingsPage() {
             <CardDescription>Configure how your social media posts are generated.</CardDescription>
           </CardHeader>
           <CardContent>
-            {/* Automation component will go here */}
-            <p className="text-sm text-muted-foreground">Automation configuration coming soon.</p>
+            <AutomationList automations={automations || []} />
           </CardContent>
         </Card>
       </div>
