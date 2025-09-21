@@ -88,8 +88,9 @@ export async function getCalendarEvents(): Promise<CalendarEvent[]> {
                 } else {
                     console.log(`Successfully refreshed and saved token for account ${account.id}`);
                 }
-            } catch (refreshError: any) {
-                console.error(`Failed to refresh token for account ${account.id}:`, refreshError.message);
+            } catch (refreshError: unknown) {
+                const message = refreshError instanceof Error ? refreshError.message : String(refreshError);
+                console.error(`Failed to refresh token for account ${account.id}:`, message);
                 // If refresh fails, we can't use this account, so we skip to the next one.
                 continue;
             }
@@ -130,8 +131,9 @@ export async function getCalendarEvents(): Promise<CalendarEvent[]> {
                 }));
                 allEvents.push(...formattedEvents);
             }
-        } catch (apiError: any) {
-            console.error(`The Google Calendar API returned an error for account ${account.id}:`, apiError.message);
+        } catch (apiError: unknown) {
+            const message = apiError instanceof Error ? apiError.message : String(apiError);
+            console.error(`The Google Calendar API returned an error for account ${account.id}:`, message);
         }
     }
 
