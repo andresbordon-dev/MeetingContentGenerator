@@ -16,7 +16,13 @@ export type CalendarEvent = {
     location?: string;
 };
 
-export async function getCalendarEvents(): Promise<CalendarEvent[]> {
+export type AccountWithEvents = {
+  accountEmail: string;
+  events: CalendarEvent[];
+};
+
+
+export async function getCalendarEvents(): Promise<AccountWithEvents[]> {
     const supabase = await createClient();
     const { data: { user } } = await supabase.auth.getUser();
 
@@ -28,28 +34,17 @@ export async function getCalendarEvents(): Promise<CalendarEvent[]> {
     // 1. Select all necessary fields, including the ID and expires_at timestamp
     const { data: accounts, error } = await supabase
         .from('connected_accounts')
-        .select('id, access_token, refresh_token, expires_at')
+        .select('id, access_token, refresh_token, expires_at, provider_user_email')
         .eq('user_id', user.id)
         .eq('provider', 'google');
 
-    if (error) {
+    if (error || !accounts) {
         console.error("Error fetching connected accounts:", error);
         return [];
     }
-
-    if (!accounts || accounts.length === 0) {
-        console.log("No connected Google accounts found for this user.");
-        return [];
-    }
-
-    console.log(`Found ${accounts.length} Google account(s) to process.`);
-    const allEvents: CalendarEvent[] = [];
-
-    // Create a single OAuth2 client instance to be used in the loop
-    const oauth2Client = new google.auth.OAuth2(
-        process.env.GOOGLE_CLIENT_ID,
-        process.env.GOOGLE_CLIENT_SECRET
-    );
+    
+    const allAccountsWithEvents: AccountWithEvents[] = [];
+    const oauth2Client = new google.auth.OAuth2(process.env.GOOGLE_CLIENT_ID, process.env.GOOGLE_CLIENT_SECRET);
 
     for (const account of accounts) {
         if (!account.access_token || !account.refresh_token || !account.expires_at) {
@@ -101,20 +96,15 @@ export async function getCalendarEvents(): Promise<CalendarEvent[]> {
             oauth2Client.setCredentials({ access_token: currentAccessToken });
             const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
 
-            const timeMin = new Date().toISOString();
-            const timeMax = new Date();
-            timeMax.setDate(timeMax.getDate() + 30); // Fetch events for the next 30 days
-
             const response = await calendar.events.list({
                 calendarId: 'primary',
-                timeMin: timeMin,
-                timeMax: timeMax.toISOString(),
                 maxResults: 15,
                 singleEvents: true,
                 orderBy: 'startTime',
             });
 
             const events = response.data.items;
+            const formattedEvents: CalendarEvent[] = [];
             if (events && events.length) {
                 console.log(`Fetched ${events.length} events for account ${account.id}`);
                 const formattedEvents = events.map((event) => ({
@@ -129,18 +119,22 @@ export async function getCalendarEvents(): Promise<CalendarEvent[]> {
                     description: event.description || '',
                     location: event.location || '',
                 }));
-                allEvents.push(...formattedEvents);
+                allAccountsWithEvents.push({
+                accountEmail: account.provider_user_email || `Account ${account.id.substring(0, 6)}`,
+                events: formattedEvents.sort((a, b) => new Date(a.startTime!).getTime() - new Date(b.startTime!).getTime())
+            });
             }
         } catch (apiError: unknown) {
             const message = apiError instanceof Error ? apiError.message : String(apiError);
-            console.error(`The Google Calendar API returned an error for account ${account.id}:`, message);
+            console.error(`API error for account ${account.provider_user_email}:`, message);
+            // Even if one account fails, we should continue with others
+            allAccountsWithEvents.push({
+                accountEmail: account.provider_user_email || "Error Account",
+                events: []
+            });
         }
     }
-
-    // Sort all events from all calendars together
-    allEvents.sort((a, b) => new Date(a.startTime!).getTime() - new Date(b.startTime!).getTime());
-    console.log(`Total events fetched from all accounts: ${allEvents.length}`);
-    return allEvents;
+    return allAccountsWithEvents;
 }
 
 // This action will be called when a user toggles the switch
