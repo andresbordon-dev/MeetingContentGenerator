@@ -71,8 +71,9 @@ export async function GET(request: Request) {
 
     return NextResponse.redirect(`${origin}/settings?success=google_connected`);
 
-  } catch (error: any) {
-    console.error("Google OAuth Callback Error:", error.message);
-    return NextResponse.redirect(`${origin}/settings?error=${encodeURIComponent(error.message)}`);
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("Google OAuth Callback Error:", message);
+    return NextResponse.redirect(`${origin}/settings?error=${encodeURIComponent(message)}`);
   }
 }
