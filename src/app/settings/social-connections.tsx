@@ -14,7 +14,7 @@ export function SocialConnections({ serverConnectedProviders }: { serverConnecte
   
   const handleConnectLinkedIn = () => {
     const clientId = process.env.NEXT_PUBLIC_LINKEDIN_CLIENT_ID;
-    const redirectUri = `${window.location.origin}/api/auth/callback/linkedin`;
+    const redirectUri = `${window.location.origin}/auth/callback/linkedin`;
     const scope = 'openid profile w_member_social'; // profile for name, w_member_social for posting
     const state = 'DCEeFWf45A53sdfKef424'; // A unique, unguessable random string.
 
@@ -26,7 +26,7 @@ export function SocialConnections({ serverConnectedProviders }: { serverConnecte
   const handleConnectGoogle = () => {
     const clientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
     // This is our new, dedicated callback route
-    const redirectUri = `${window.location.origin}/api/auth/callback/google-additional`;
+    const redirectUri = `${window.location.origin}/auth/callback/google-additional`;
     const scope = 'https://www.googleapis.com/auth/calendar.readonly';
     
     // The 'prompt' parameter is crucial. 'select_account' forces the user to

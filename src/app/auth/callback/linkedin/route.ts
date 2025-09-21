@@ -26,7 +26,7 @@ export async function GET(request: Request) {
       body: new URLSearchParams({
         grant_type: 'authorization_code',
         code: code,
-        redirect_uri: `${origin}/api/auth/callback/linkedin`,
+        redirect_uri: `${origin}/auth/callback/linkedin`,
         client_id: process.env.LINKEDIN_CLIENT_ID!,
         client_secret: process.env.LINKEDIN_CLIENT_SECRET!,
       }),
