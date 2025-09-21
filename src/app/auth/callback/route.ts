@@ -25,6 +25,7 @@ export async function GET(request: Request) {
             access_token: session.provider_token,
             refresh_token: session.provider_refresh_token,
             expires_at: new Date(session.expires_at! * 1000).toISOString(),
+            provider_user_email: user.email,
           }, { onConflict: 'user_id, provider, provider_user_id' }) // Use upsert to handle re-logins
 
         if (insertError) {

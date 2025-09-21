@@ -13,6 +13,7 @@ export async function GET(request: Request) {
   const supabase = await createClient();
 
   const { data: { user } } = await supabase.auth.getUser();
+  console.log("User: ", user);
 
   if (!user) {
     return NextResponse.redirect(`${origin}/auth/login?error=not_authenticated`);
@@ -32,6 +33,10 @@ export async function GET(request: Request) {
       }),
     });
 
+    console.log(`Supabase user ID: ${user.id}`);
+    console.log('Successfully exchanged code for a new access token.');
+    
+
     if (!tokenResponse.ok) {
       const errorData = await tokenResponse.json();
       throw new Error(errorData.error_description || "Failed to get Google token.");
@@ -50,7 +55,9 @@ export async function GET(request: Request) {
     if (!profileResponse.ok) throw new Error("Failed to fetch Google user profile.");
 
     const profileData = await profileResponse.json();
+    console.log(`Fetched Google profile for new connection: ${profileData.email} (ID: ${profileData.id})`);
     const googleUserId = profileData.id;
+    console.log(`Saving connection: Supabase User (${user.id}) -> Google User (${profileData.email})`);
 
     // 3. Save the new connection to your database
     const { error: upsertError } = await supabase
@@ -61,12 +68,16 @@ export async function GET(request: Request) {
         provider_user_id: googleUserId,
         access_token: accessToken,
         refresh_token: refreshToken,
+        provider_user_email: profileData.email,
         expires_at: new Date(Date.now() + expiresIn * 1000).toISOString(),
       }, { onConflict: 'user_id, provider, provider_user_id' }); // onConflict is key to prevent duplicates
       
     if (upsertError) {
         console.error("Supabase upsert error:", upsertError);
         throw upsertError;
+    }
+    else {
+      console.log("Upsert successful.");
     }
 
     return NextResponse.redirect(`${origin}/settings?success=google_connected`);

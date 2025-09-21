@@ -17,8 +17,8 @@ export type CalendarEvent = {
 };
 
 export type AccountWithEvents = {
-  accountEmail: string;
-  events: CalendarEvent[];
+    accountEmail: string;
+    events: CalendarEvent[];
 };
 
 
@@ -42,7 +42,8 @@ export async function getCalendarEvents(): Promise<AccountWithEvents[]> {
         console.error("Error fetching connected accounts:", error);
         return [];
     }
-    
+
+    console.log(accounts.length, "connected Google accounts found for user", user.id);
     const allAccountsWithEvents: AccountWithEvents[] = [];
     const oauth2Client = new google.auth.OAuth2(process.env.GOOGLE_CLIENT_ID, process.env.GOOGLE_CLIENT_SECRET);
 
@@ -98,16 +99,27 @@ export async function getCalendarEvents(): Promise<AccountWithEvents[]> {
 
             const response = await calendar.events.list({
                 calendarId: 'primary',
-                maxResults: 15,
+                maxResults: 500,
                 singleEvents: true,
                 orderBy: 'startTime',
             });
 
             const events = response.data.items;
-            const formattedEvents: CalendarEvent[] = [];
+            let formattedEvents: CalendarEvent[] = [];
             if (events && events.length) {
                 console.log(`Fetched ${events.length} events for account ${account.id}`);
-                const formattedEvents = events.map((event) => ({
+
+                console.log("All Events: ", events);
+                const now = new Date();
+                const upcomingEvents = events.filter(event => {
+                    const startTime = event.start?.dateTime || event.start?.date;
+                    if (!startTime) return false; 
+                    console.log("Event Start Time: ", new Date(startTime));
+                    console.log(new Date(startTime) > now);
+                    return new Date(startTime) > now;
+                });
+                console.log("Upcoming Events: ", upcomingEvents);
+                formattedEvents = upcomingEvents.map((event) => ({
                     id: event.id!,
                     title: event.summary || 'No Title',
                     startTime: event.start?.dateTime || event.start?.date || undefined,
@@ -120,9 +132,9 @@ export async function getCalendarEvents(): Promise<AccountWithEvents[]> {
                     location: event.location || '',
                 }));
                 allAccountsWithEvents.push({
-                accountEmail: account.provider_user_email || `Account ${account.id.substring(0, 6)}`,
-                events: formattedEvents.sort((a, b) => new Date(a.startTime!).getTime() - new Date(b.startTime!).getTime())
-            });
+                    accountEmail: account.provider_user_email || `Account ${account.id.substring(0, 6)}`,
+                    events: formattedEvents.sort((a, b) => new Date(a.startTime!).getTime() - new Date(b.startTime!).getTime())
+                });
             }
         } catch (apiError: unknown) {
             const message = apiError instanceof Error ? apiError.message : String(apiError);
@@ -134,6 +146,7 @@ export async function getCalendarEvents(): Promise<AccountWithEvents[]> {
             });
         }
     }
+    console.log(allAccountsWithEvents);
     return allAccountsWithEvents;
 }
 

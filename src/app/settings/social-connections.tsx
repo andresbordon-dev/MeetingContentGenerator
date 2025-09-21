@@ -27,7 +27,7 @@ export function SocialConnections({ serverConnectedProviders }: { serverConnecte
     const clientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
     // This is our new, dedicated callback route
     const redirectUri = `${window.location.origin}/auth/callback/google-additional`;
-    const scope = 'https://www.googleapis.com/auth/calendar.readonly';
+    const scope = 'https://www.googleapis.com/auth/calendar.readonly openid email profile';
     
     // The 'prompt' parameter is crucial. 'select_account' forces the user to
     // choose which Google account to connect, even if they are already logged in to one.
