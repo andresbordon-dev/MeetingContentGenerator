@@ -1,4 +1,3 @@
-// src/app/actions.ts
 'use server'
 
 import { createClient } from "@/lib/supabase/server";
@@ -7,7 +6,6 @@ import { google } from "googleapis";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
-// Define a type for our calendar events for type safety
 export type CalendarEvent = {
     id: string;
     title?: string;
@@ -23,6 +21,13 @@ export type AccountWithEvents = {
     events: CalendarEvent[];
 };
 
+interface MeetingForBotCreation {
+    title?: string;
+    meeting_url: string | null;
+    start_time?: string;
+    end_time?: string;
+    platform: string | null;
+}
 
 export async function getCalendarEvents(): Promise<AccountWithEvents[]> {
     const supabase = await createClient();
@@ -33,7 +38,6 @@ export async function getCalendarEvents(): Promise<AccountWithEvents[]> {
         return [];
     }
 
-    // 1. Select all necessary fields, including the ID and expires_at timestamp
     const { data: accounts, error } = await supabase
         .from('connected_accounts')
         .select('id, access_token, refresh_token, expires_at, provider_user_email')
@@ -57,7 +61,6 @@ export async function getCalendarEvents(): Promise<AccountWithEvents[]> {
 
         let currentAccessToken = account.access_token;
 
-        // 2. Check if the token is expired or will expire in the next minute
         const isExpired = new Date(account.expires_at) < new Date(Date.now() + 60 * 1000);
 
         if (isExpired) {
@@ -70,13 +73,11 @@ export async function getCalendarEvents(): Promise<AccountWithEvents[]> {
                 const newExpiresAt = new Date();
                 newExpiresAt.setSeconds(newExpiresAt.getSeconds() + (credentials.expiry_date! - Date.now()) / 1000);
 
-                // 3. IMPORTANT: Update the database with the new token
                 const { error: updateError } = await supabase
                     .from('connected_accounts')
                     .update({
                         access_token: credentials.access_token,
                         expires_at: newExpiresAt.toISOString(),
-                        // A new refresh token is sometimes returned, update it if available
                         ...(credentials.refresh_token && { refresh_token: credentials.refresh_token }),
                     })
                     .eq('id', account.id);
@@ -89,12 +90,10 @@ export async function getCalendarEvents(): Promise<AccountWithEvents[]> {
             } catch (refreshError: unknown) {
                 const message = refreshError instanceof Error ? refreshError.message : String(refreshError);
                 console.error(`Failed to refresh token for account ${account.id}:`, message);
-                // If refresh fails, we can't use this account, so we skip to the next one.
                 continue;
             }
         }
 
-        // 4. Use the valid token to fetch calendar events
         try {
             oauth2Client.setCredentials({ access_token: currentAccessToken });
             const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
@@ -141,7 +140,6 @@ export async function getCalendarEvents(): Promise<AccountWithEvents[]> {
         } catch (apiError: unknown) {
             const message = apiError instanceof Error ? apiError.message : String(apiError);
             console.error(`API error for account ${account.provider_user_email}:`, message);
-            // Even if one account fails, we should continue with others
             allAccountsWithEvents.push({
                 accountEmail: account.provider_user_email || "Error Account",
                 events: []
@@ -152,14 +150,66 @@ export async function getCalendarEvents(): Promise<AccountWithEvents[]> {
     return allAccountsWithEvents;
 }
 
-// This action will be called when a user toggles the switch
+async function createRecallBot(meeting: MeetingForBotCreation): Promise<string | null> {
+    const recallApiKey = process.env.RECALL_API_KEY;
+    
+    if (!recallApiKey) {
+        console.error("RECALL_API_KEY is not set.");
+        return null;
+    }
+
+    try {
+        const botResponse = await fetch('https://api.recall.ai/api/v1/bots/', {
+            method: 'POST',
+            headers: {
+                'Authorization': `Token ${recallApiKey}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                bot_name: `Meeting Bot - ${meeting.title || 'Untitled'}`,
+                calendar_invite: {
+                    meeting_url: meeting.meeting_url,
+                    start_time: meeting.start_time,
+                    end_time: meeting.end_time
+                },
+                ...(meeting.platform === 'zoom' && {
+                    zoom: {
+                        meeting_url: meeting.meeting_url
+                    }
+                }),
+                ...(meeting.platform === 'gmeet' && {
+                    google_meet: {
+                        meeting_url: meeting.meeting_url
+                    }
+                }),
+                ...(meeting.platform === 'msteams' && {
+                    teams: {
+                        meeting_url: meeting.meeting_url
+                    }
+                })
+            })
+        });
+
+        if (!botResponse.ok) {
+            const errorData = await botResponse.json();
+            console.error("Failed to create recall.ai bot:", errorData);
+            return null;
+        }
+
+        const botData = await botResponse.json();
+        return botData.id;
+    } catch (error) {
+        console.error("Error creating recall.ai bot:", error);
+        return null;
+    }
+}
+
 export async function toggleMeetingTranscription(event: CalendarEvent, isEnabled: boolean) {
     const supabase = await createClient();
     const { data: { user } } = await supabase.auth.getUser();
 
     if (!user) throw new Error("User not authenticated");
 
-    // Basic function to find a meeting link
     const findMeetingUrl = (text: string): string | null => {
         const urlRegex = /(https?:\/\/(?:www\.)?(?:zoom\.us|meet\.google\.com|teams\.microsoft\.com)[\S]+)/g;
         const matches = text.match(urlRegex);
@@ -167,28 +217,56 @@ export async function toggleMeetingTranscription(event: CalendarEvent, isEnabled
     };
 
     const meetingUrl = findMeetingUrl(`${event.location} ${event.description}`);
+    const platform = meetingUrl?.includes('zoom') ? 'zoom' : 
+                    meetingUrl?.includes('google') ? 'gmeet' : 
+                    meetingUrl?.includes('teams') ? 'msteams' : null;
+
+    let recallBotId: string | null = null;
+    let status = 'pending';
+
+    if (isEnabled && meetingUrl) {
+        const botId = await createRecallBot({
+            title: event.title,
+            meeting_url: meetingUrl,
+            start_time: event.startTime,
+            end_time: event.endTime,
+            platform
+        });
+        
+        if (botId) {
+            recallBotId = botId;
+            status = 'scheduled';
+        } else {
+            console.warn("Failed to create recall.ai bot, but continuing with meeting setup");
+            status = 'error';
+        }
+    } else if (!isEnabled) {
+        status = 'cancelled';
+    }
+
+    const meetingData = {
+        user_id: user.id,
+        gcal_event_id: event.id,
+        title: event.title,
+        start_time: event.startTime,
+        end_time: event.endTime,
+        is_transcription_enabled: isEnabled,
+        meeting_url: meetingUrl,
+        platform,
+        recall_bot_id: recallBotId,
+        status,
+        updated_at: new Date().toISOString(),
+    };
 
     const { error } = await supabase
         .from('meetings')
-        .upsert({
-            user_id: user.id,
-            gcal_event_id: event.id,
-            title: event.title,
-            start_time: event.startTime,
-            end_time: event.endTime,
-            is_transcription_enabled: isEnabled,
-            meeting_url: meetingUrl,
-            // Simple platform detection
-            platform: meetingUrl?.includes('zoom') ? 'zoom' : meetingUrl?.includes('google') ? 'gmeet' : meetingUrl?.includes('teams') ? 'msteams' : null,
-            updated_at: new Date().toISOString(),
-        }, { onConflict: 'user_id, gcal_event_id' });
+        .upsert(meetingData, { onConflict: 'user_id, gcal_event_id' });
 
     if (error) {
         console.error("Error toggling transcription:", error);
         throw new Error("Failed to update meeting setting.");
     }
 
-    // Revalidate the dashboard path to show changes
     revalidatePath('/dashboard');
 }
 
@@ -200,15 +278,23 @@ export async function postToLinkedIn(content: string) {
         return { error: 'User not authenticated.' };
     }
 
+    if (!content || content.trim().length === 0) {
+        return { error: 'Content cannot be empty.' };
+    }
+
     const { data: account, error: accountError } = await supabase
         .from('connected_accounts')
-        .select('access_token, provider_user_id')
+        .select('access_token, provider_user_id, expires_at')
         .eq('user_id', user.id)
         .eq('provider', 'linkedin')
         .single();
 
     if (accountError || !account) {
         return { error: 'LinkedIn account not connected.' };
+    }
+
+    if (account.expires_at && new Date(account.expires_at) < new Date()) {
+        return { error: 'LinkedIn token has expired. Please reconnect your account.' };
     }
 
     try {
@@ -235,13 +321,25 @@ export async function postToLinkedIn(content: string) {
         if (!postResponse.ok) {
             const errorData = await postResponse.json();
             console.error("LinkedIn API Error:", errorData);
-            throw new Error(errorData.message || 'Failed to post to LinkedIn.');
+            
+            if (postResponse.status === 401) {
+                return { error: 'LinkedIn token expired. Please reconnect your account.' };
+            } else if (postResponse.status === 403) {
+                return { error: 'Insufficient permissions to post on LinkedIn.' };
+            } else if (postResponse.status === 429) {
+                return { error: 'Rate limited by LinkedIn. Please try again later.' };
+            }
+            
+            throw new Error(errorData.message || `LinkedIn API error: ${postResponse.status}`);
         }
 
-        return { success: true };
+        const responseData = await postResponse.json();
+        console.log("Successfully posted to LinkedIn:", responseData);
+        return { success: true, postId: responseData.id };
 
     } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);
+        console.error("Error posting to LinkedIn:", message);
         return { error: message };
     }
 }
@@ -313,17 +411,15 @@ export async function getMeetingDetails(meetingId: string) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error("Not authenticated");
 
-  // Fetch the meeting itself, including the transcript
   const { data: meeting, error: meetingError } = await supabase
     .from('meetings')
     .select('*')
     .eq('id', meetingId)
-    .eq('user_id', user.id) // Security check
+    .eq('user_id', user.id)
     .single();
   
   if (meetingError) throw new Error(`Meeting not found: ${meetingError.message}`);
 
-  // Fetch all generated content for this meeting, joining with the automation that created it
   const { data: generatedContent, error: contentError } = await supabase
     .from('generated_content')
     .select('*, automations(name, platform)')
@@ -331,7 +427,6 @@ export async function getMeetingDetails(meetingId: string) {
 
   if (contentError) throw new Error(`Could not fetch content: ${contentError.message}`);
 
-  // Organize the data for the client
   const emailContent = generatedContent?.find(c => c.type === 'email');
   const socialPosts = generatedContent?.filter(c => c.type.startsWith('social_post'));
 
@@ -350,8 +445,6 @@ export async function disconnectAccount(accountId: string) {
     return { error: "Not authenticated" };
   }
 
-  // This query includes a crucial security check (`.eq('user_id', user.id)`)
-  // to ensure that users can only delete their own connections.
   const { error } = await supabase
     .from('connected_accounts')
     .delete()
@@ -363,7 +456,6 @@ export async function disconnectAccount(accountId: string) {
     return { error: `Database error: ${error.message}` };
   }
 
-  // Revalidate the settings path to force the server component to refetch data
   revalidatePath('/settings');
   return { success: true };
 }

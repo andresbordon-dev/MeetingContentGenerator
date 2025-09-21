@@ -1,20 +1,16 @@
-// src/app/api/poll-transcripts/route.ts
 import { createClient } from "@/lib/supabase/server";
 import { NextResponse } from "next/server";
 import { headers } from "next/headers";
 import OpenAI from "openai";
 
-// Initialize OpenAI client
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-// --- AI Generation Functions ---
-
 async function generateFollowUpEmail(transcript: string): Promise<string> {
   try {
     const completion = await openai.chat.completions.create({
-      model: "gpt-3.5-turbo", // Use gpt-4 for higher quality if budget allows
+      model: "gpt-3.5-turbo",
       messages: [
         {
           role: "system",
@@ -33,8 +29,6 @@ async function generateFollowUpEmail(transcript: string): Promise<string> {
   }
 }
 
-// This is a placeholder for social media generation. In a real app, this would
-// iterate through user's custom automations. For now, we'll use a fixed one.
 async function generateSocialMediaPost(transcript: string): Promise<string> {
   try {
     const completion = await openai.chat.completions.create({
@@ -57,21 +51,17 @@ async function generateSocialMediaPost(transcript: string): Promise<string> {
   }
 }
 
-// Define interface for Recall.ai bot response
 interface RecallBotResponse {
   state: string;
   transcript_url?: string;
 }
 
-// Define interface for transcript item
 interface TranscriptItem {
   text?: string;
-  [key: string]: unknown; // Allow for other properties we might not care about
+  [key: string]: unknown;
 }
 
-// --- MAIN API ROUTE ---
 export async function GET(_request: Request) {
-  // 1. Secure the endpoint
   const headersList = await headers();
   const authHeader = headersList.get('authorization');
   if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
@@ -86,12 +76,11 @@ export async function GET(_request: Request) {
     return NextResponse.json({ error: "API key not configured" }, { status: 500 });
   }
 
-  // 2. Find meetings that have finished and are waiting for a transcript
   const { data: meetings, error } = await supabase
     .from('meetings')
     .select('*')
     .eq('status', 'scheduled')
-    .lte('end_time', new Date().toISOString()); // Check for meetings whose end time is in the past
+    .lte('end_time', new Date().toISOString());
 
   if (error) {
     console.error("Error fetching scheduled meetings:", error);
@@ -103,23 +92,53 @@ export async function GET(_request: Request) {
   }
 
   let processedCount = 0;
+  let errorCount = 0;
+
   for (const meeting of meetings) {
-    if (!meeting.recall_bot_id) continue;
+    if (!meeting.recall_bot_id) {
+      console.warn(`Meeting ${meeting.id} has no recall_bot_id, skipping`);
+      continue;
+    }
 
     try {
-      // 3. Poll Recall.ai for the bot's status
-      const response = await fetch(`https://api.recall.ai/api/v1/bots/${meeting.recall_bot_id}/`, {
-        method: 'GET',
-        headers: { 'Authorization': `Token ${recallApiKey}` },
-      });
+      let response;
+      let retryCount = 0;
+      const maxRetries = 3;
 
-      if (!response.ok) {
-        throw new Error(`Recall API responded with status ${response.status}`);
+      while (retryCount < maxRetries) {
+        try {
+          response = await fetch(`https://api.recall.ai/api/v1/bots/${meeting.recall_bot_id}/`, {
+            method: 'GET',
+            headers: { 'Authorization': `Token ${recallApiKey}` },
+          });
+
+          if (response.ok) break;
+          
+          if (response.status === 429) {
+            const waitTime = Math.pow(2, retryCount) * 1000;
+            console.log(`Rate limited, waiting ${waitTime}ms before retry ${retryCount + 1}`);
+            await new Promise(resolve => setTimeout(resolve, waitTime));
+            retryCount++;
+            continue;
+          }
+
+          throw new Error(`Recall API responded with status ${response.status}`);
+        } catch (fetchError) {
+          retryCount++;
+          if (retryCount >= maxRetries) {
+            throw fetchError;
+          }
+          console.warn(`Fetch attempt ${retryCount} failed for meeting ${meeting.id}, retrying...`);
+          await new Promise(resolve => setTimeout(resolve, 1000 * retryCount));
+        }
+      }
+
+      if (!response || !response.ok) {
+        throw new Error(`Failed to fetch bot status after ${maxRetries} attempts`);
       }
 
       const botData: RecallBotResponse = await response.json();
 
-      // 4. If transcript is ready, process it
       if (botData.state === 'media_ready' && botData.transcript_url) {
         console.log(`Transcript ready for meeting ${meeting.id}. Processing...`);
 
@@ -141,76 +160,75 @@ export async function GET(_request: Request) {
 
         if (autoError) throw new Error(`Could not fetch automations: ${autoError.message}`);
 
-        // 2. Generate content for each automation
         if (automations && automations.length > 0) {
           await Promise.all(automations.map(async (automation) => {
-            const completion = await openai.chat.completions.create({
-              model: "gpt-3.5-turbo",
-              messages: [
-                { role: "system", content: automation.prompt },
-                { role: "user", content: `Here is the meeting transcript:\n\n${transcriptText}` }
-              ]
-            });
-            const content = completion.choices[0].message.content;
+            try {
+              const completion = await openai.chat.completions.create({
+                model: "gpt-3.5-turbo",
+                messages: [
+                  { role: "system", content: automation.prompt },
+                  { role: "user", content: `Here is the meeting transcript:\n\n${transcriptText}` }
+                ]
+              });
+              const content = completion.choices[0].message.content;
 
-            // Save this specific piece of content, linked to its automation
-            await supabase.from('generated_content').upsert({
-              meeting_id: meeting.id,
-              automation_id: automation.id,
-              type: `social_post_${automation.platform}`, // Keep type for simple filtering
-              content: content
-            }, { onConflict: 'meeting_id, automation_id' });
+              if (content) {
+                await supabase.from('generated_content').upsert({
+                  meeting_id: meeting.id,
+                  automation_id: automation.id,
+                  type: `social_post_${automation.platform}`,
+                  content: content
+                }, { onConflict: 'meeting_id, automation_id' });
+              }
+            } catch (autoError) {
+              console.error(`Failed to generate content for automation ${automation.id}:`, autoError);
+            }
           }));
         }
 
-        // Generate the standard follow-up email (this is separate from automations)
         const emailContent = await generateFollowUpEmail(transcriptText);
-        await supabase.from('generated_content').upsert({
-          meeting_id: meeting.id,
-          type: 'email',
-          content: emailContent
-        }, { onConflict: 'meeting_id, type' }); // This might need a different onConflict strategy, but is okay for now
+        if (emailContent) {
+          await supabase.from('generated_content').upsert({
+            meeting_id: meeting.id,
+            type: 'email',
+            content: emailContent
+          }, { onConflict: 'meeting_id, type' });
+        }
 
-        // 3. Update the meeting status to completed
-        await supabase.from('meetings').update({
-          status: 'completed',
-          transcript: transcriptText,
-        }).eq('id', meeting.id);
-
-        console.log(`Successfully processed and generated content for meeting ${meeting.id}`);
-        processedCount++;
-
-        const socialPostContent = await generateSocialMediaPost(transcriptText);
-
-        // --- Save everything to the database ---
         const { error: updateError } = await supabase.from('meetings').update({
           status: 'completed',
           transcript: transcriptText,
         }).eq('id', meeting.id);
 
-        if (updateError) throw updateError;
-
-        // For now, we save these with a fixed type. Later, this would link to the user's specific automations.
-        // Using `upsert` is a good practice here in case the job runs twice.
-        const { error: contentError } = await supabase.from('generated_content').upsert([
-          { meeting_id: meeting.id, type: 'email', content: emailContent },
-          { meeting_id: meeting.id, type: 'social_post_linkedin', content: socialPostContent }
-        ], { onConflict: 'meeting_id, type' });
-
-        if (contentError) throw contentError;
+        if (updateError) {
+          console.error(`Failed to update meeting ${meeting.id}:`, updateError);
+          throw updateError;
+        }
 
         console.log(`Successfully processed and generated content for meeting ${meeting.id}`);
         processedCount++;
       } else if (['error', 'done'].includes(botData.state)) {
-        // Handle terminal states where media isn't ready
         await supabase.from('meetings').update({ status: 'error' }).eq('id', meeting.id);
         console.log(`Bot for meeting ${meeting.id} ended in state: ${botData.state}`);
       }
     } catch (processError) {
       console.error(`Failed to process meeting ${meeting.id}:`, processError);
-      await supabase.from('meetings').update({ status: 'error' }).eq('id', meeting.id);
+      errorCount++;
+      
+      try {
+        await supabase.from('meetings').update({ 
+          status: 'error',
+          error_message: processError instanceof Error ? processError.message : 'Unknown error'
+        }).eq('id', meeting.id);
+      } catch (updateError) {
+        console.error(`Failed to update meeting ${meeting.id} status to error:`, updateError);
+      }
     }
   }
 
-  return NextResponse.json({ message: `Processed ${processedCount} meetings.` });
+  return NextResponse.json({ 
+    message: `Processing completed. Processed: ${processedCount}, Errors: ${errorCount}`,
+    processed: processedCount,
+    errors: errorCount
+  });
 }
