@@ -62,7 +62,7 @@ function MeetingTile({ meeting, isEnabled, onToggle }: { meeting: MeetingTileInf
 export function DashboardClient({ accountsWithEvents, pastMeetings, initialEnabledIds }: {
   accountsWithEvents: AccountWithEvents[],
   pastMeetings: MeetingTileInfo[],
-  initialEnabledIds: string[]
+  initialEnabledIds: (string | null)[]
 }) {
   const [enabledIds, setEnabledIds] = useState(new Set(initialEnabledIds));
 

@@ -7,6 +7,17 @@ import { DashboardClient } from "./dashboard-client";
 import { unstable_noStore as noStore } from 'next/cache';
 import { MeetingTileInfo } from "./dashboard-client"; // Move type definition to client
 
+type MeetingStatus = "completed" | "processing" | "error" | "pending" | undefined;
+
+interface MeetingData {
+  id: string;
+  gcal_event_id: string | null;
+  is_transcription_enabled: boolean;
+  title: string | null;
+  start_time: string;
+  status: MeetingStatus;
+}
+
 export default async function DashboardPage() {
   noStore();
   const supabase = await createClient();
@@ -22,12 +33,12 @@ export default async function DashboardPage() {
     .in('status', ['completed', 'processing', 'error'])
     .order('start_time', { ascending: false });
   
-  const pastMeetings: MeetingTileInfo[] = pastMeetingsData?.map(meeting => ({
+  const pastMeetings: MeetingTileInfo[] = (pastMeetingsData as MeetingData[] | null)?.map(meeting => ({
     id: meeting.id,
     title: meeting.title || "Untitled Meeting",
     startTime: meeting.start_time,
     isUpcoming: false,
-    status: meeting.status as any,
+    status: meeting.status,
   })) || [];
 
   // 3. Fetch the toggle state for all meetings
@@ -37,7 +48,7 @@ export default async function DashboardPage() {
     .eq('user_id', user!.id);
 
   const enabledMeetingIds = new Set(
-    meetingsData
+    (meetingsData as { gcal_event_id: string | null; is_transcription_enabled: boolean }[] | null)
       ?.filter(m => m.is_transcription_enabled)
       .map(m => m.gcal_event_id)
   );
@@ -46,7 +57,6 @@ export default async function DashboardPage() {
     <div>
         <h1 className="text-2xl font-bold mb-6">Meetings Dashboard</h1>
         <DashboardClient 
-          // --- PASS THE GROUPED DATA DIRECTLY ---
           accountsWithEvents={accountsWithEvents}
           pastMeetings={pastMeetings}
           initialEnabledIds={Array.from(enabledMeetingIds)}
