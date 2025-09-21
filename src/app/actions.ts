@@ -341,3 +341,29 @@ export async function getMeetingDetails(meetingId: string) {
     socialPosts
   };
 }
+
+export async function disconnectAccount(accountId: string) {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  
+  if (!user) {
+    return { error: "Not authenticated" };
+  }
+
+  // This query includes a crucial security check (`.eq('user_id', user.id)`)
+  // to ensure that users can only delete their own connections.
+  const { error } = await supabase
+    .from('connected_accounts')
+    .delete()
+    .eq('id', accountId)
+    .eq('user_id', user.id);
+  
+  if (error) {
+    console.error("Error disconnecting account:", error);
+    return { error: `Database error: ${error.message}` };
+  }
+
+  // Revalidate the settings path to force the server component to refetch data
+  revalidatePath('/settings');
+  return { success: true };
+}

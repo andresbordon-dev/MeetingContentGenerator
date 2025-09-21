@@ -12,7 +12,7 @@ export default async function SettingsPage() {
   // Fetch existing connections to pass to the client component
   const { data: connections } = await supabase
     .from('connected_accounts')
-    .select('provider')
+    .select('id, provider, provider_user_email')
     .eq('user_id', user!.id);
 
     const { data: automations } = await supabase.from('automations').select('*').eq('user_id', user!.id);
@@ -29,7 +29,7 @@ export default async function SettingsPage() {
             <CardDescription>Connect your accounts to enable one-click posting.</CardDescription>
           </CardHeader>
           <CardContent>
-            <SocialConnections serverConnectedProviders={connectedProviders} />
+            <SocialConnections initialConnections={connections || []} />
           </CardContent>
         </Card>
 
